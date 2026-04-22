@@ -1,0 +1,180 @@
+<!DOCTYPE html>
+<html lang="es">
+<head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0">
+    <title>Cámara de Inspección</title>
+    <script src="https://js.jotform.com/JotFormCustomWidget.min.js"></script>
+    
+    <style>
+        body { font-family: 'Segoe UI', Tahoma, Geneva, Verdana, sans-serif; margin: 0; padding: 10px; box-sizing: border-box; background-color: #f8f9fa; }
+        .header { display: flex; justify-content: space-between; align-items: center; margin-bottom: 15px; }
+        h3 { margin: 0; font-size: 16px; color: #333; }
+        .contador { font-weight: bold; padding: 5px 10px; background: #e9ecef; border-radius: 12px; font-size: 14px; color: #495057; }
+        .contador.limite { background: #ffe3e3; color: #d63384; }
+        
+        .btn-tomar { display: block; width: 100%; padding: 12px; background-color: #0d6efd; color: white; border: none; border-radius: 6px; font-size: 16px; font-weight: bold; cursor: pointer; transition: 0.2s; }
+        .btn-tomar:hover { background-color: #0b5ed7; }
+        .btn-tomar:disabled { background-color: #adb5bd; cursor: not-allowed; }
+
+        /* Cuadrícula de la Galería */
+        .galeria { display: grid; grid-template-columns: repeat(auto-fill, minmax(100px, 1fr)); gap: 10px; margin-top: 15px; }
+        .foto-container { position: relative; border-radius: 6px; overflow: hidden; box-shadow: 0 2px 5px rgba(0,0,0,0.1); border: 2px solid #fff; aspect-ratio: 1 / 1; }
+        .foto-container img { width: 100%; height: 100%; object-fit: cover; display: block; }
+        
+        /* Botón de Borrar (X) */
+        .btn-borrar { position: absolute; top: 5px; right: 5px; background: rgba(220, 53, 69, 0.9); color: white; border: none; border-radius: 50%; width: 25px; height: 25px; font-size: 14px; font-weight: bold; cursor: pointer; display: flex; align-items: center; justify-content: center; line-height: 1; padding: 0; }
+        .btn-borrar:hover { background: red; transform: scale(1.1); }
+    </style>
+</head>
+<body>
+
+    <div class="header">
+        <h3>Evidencias Fotográficas</h3>
+        <span id="contadorTexto" class="contador">0 / 10</span>
+    </div>
+
+    <input type="file" id="selectorFotos" accept="image/*" multiple capture="environment" style="display:none;">
+    
+    <button id="btnTomar" class="btn-tomar">📷 Agregar Fotos</button>
+
+    <div id="galeria" class="galeria"></div>
+
+    <script>
+        const MAX_FOTOS = 10;
+        let fotosArray = []; // Aquí guardaremos las imágenes en Base64
+
+        const selector = document.getElementById('selectorFotos');
+        const btnTomar = document.getElementById('btnTomar');
+        const galeria = document.getElementById('galeria');
+        const contadorTexto = document.getElementById('contadorTexto');
+
+        // 1. ABRIR CÁMARA
+        btnTomar.addEventListener('click', () => {
+            if (fotosArray.length < MAX_FOTOS) {
+                selector.click();
+            }
+        });
+
+        // 2. PROCESAR FOTOS ELEGIDAS
+        selector.addEventListener('change', async function(e) {
+            let archivos = Array.from(e.target.files);
+            
+            // Calculamos cuántas podemos aceptar sin pasarnos de 10
+            let espacioDisponible = MAX_FOTOS - fotosArray.length;
+            let archivosAProcesar = archivos.slice(0, espacioDisponible);
+
+            if (archivos.length > espacioDisponible) {
+                alert(`Solo puedes agregar ${espacioDisponible} foto(s) más. Se ignoraron las extra.`);
+            }
+
+            // Cambiamos el texto del botón mientras comprime
+            btnTomar.innerText = "⏳ Procesando...";
+            btnTomar.disabled = true;
+
+            for (let archivo of archivosAProcesar) {
+                try {
+                    // Comprimimos la imagen antes de guardarla
+                    let fotoComprimida = await comprimirImagen(archivo);
+                    fotosArray.push(fotoComprimida);
+                } catch(error) {
+                    console.error("Error al comprimir una foto", error);
+                }
+            }
+
+            // Limpiamos el input para que detecte si suben la misma foto otra vez
+            selector.value = ""; 
+            actualizarUI();
+        });
+
+        // 3. ACTUALIZAR INTERFAZ Y GALERÍA
+        function actualizarUI() {
+            // Actualizar contador
+            contadorTexto.innerText = `${fotosArray.length} / ${MAX_FOTOS}`;
+            if (fotosArray.length >= MAX_FOTOS) {
+                contadorTexto.classList.add('limite');
+                btnTomar.disabled = true;
+                btnTomar.innerText = "Límite Alcanzado";
+            } else {
+                contadorTexto.classList.remove('limite');
+                btnTomar.disabled = false;
+                btnTomar.innerText = "📷 Agregar Fotos";
+            }
+
+            // Dibujar fotos
+            galeria.innerHTML = "";
+            fotosArray.forEach((fotoBase64, index) => {
+                let div = document.createElement('div');
+                div.className = 'foto-container';
+                div.innerHTML = `
+                    <img src="${fotoBase64}" alt="Evidencia">
+                    <button class="btn-borrar" onclick="borrarFoto(${index})" title="Borrar foto">×</button>
+                `;
+                galeria.appendChild(div);
+            });
+
+            // Avisarle a Jotform que cambiamos de tamaño para que el Iframe se ajuste
+            setTimeout(() => {
+                JFCustomWidget.requestFrameResize({ height: document.body.scrollHeight + 20 });
+            }, 100);
+        }
+
+        // 4. FUNCIÓN PARA BORRAR FOTO
+        window.borrarFoto = function(index) {
+            fotosArray.splice(index, 1); // Quitamos la foto del array
+            actualizarUI(); // Redibujamos la pantalla
+        }
+
+        // --- MOTOR DE COMPRESIÓN (La magia para que no falle Jotform) ---
+        function comprimirImagen(file) {
+            return new Promise((resolve, reject) => {
+                const reader = new FileReader();
+                reader.readAsDataURL(file);
+                reader.onload = event => {
+                    const img = new Image();
+                    img.src = event.target.result;
+                    img.onload = () => {
+                        const canvas = document.createElement('canvas');
+                        const MAX_WIDTH = 1200; // Resolución HD decente
+                        
+                        let width = img.width;
+                        let height = img.height;
+
+                        // Redimensionar si es muy grande
+                        if (width > MAX_WIDTH) {
+                            height = Math.round((height * MAX_WIDTH) / width);
+                            width = MAX_WIDTH;
+                        }
+
+                        canvas.width = width;
+                        canvas.height = height;
+                        const ctx = canvas.getContext('2d');
+                        ctx.drawImage(img, 0, 0, width, height);
+
+                        // Exportar como JPEG al 70% de calidad (Excelente peso)
+                        resolve(canvas.toDataURL('image/jpeg', 0.7));
+                    };
+                    img.onerror = error => reject(error);
+                };
+            });
+        }
+
+        // --- CONEXIÓN CON JOTFORM ---
+        JFCustomWidget.subscribe("ready", function() {
+            JFCustomWidget.requestFrameResize({ height: document.body.scrollHeight + 20 });
+        });
+
+        JFCustomWidget.subscribe("submit", function() {
+            if (fotosArray.length === 0) {
+                // Opcional: Si quieres hacer el campo obligatorio, déjalo en 'false' y avisa.
+                // Aquí lo dejaremos pasar, pero mandaremos un texto vacío.
+                JFCustomWidget.sendSubmit({ valid: true, value: "" });
+            } else {
+                // Juntamos todas las fotos en un solo paquete de texto separadas por comas especiales
+                let paqueteFinal = JSON.stringify(fotosArray);
+                JFCustomWidget.sendSubmit({ valid: true, value: paqueteFinal });
+            }
+        });
+    </script>
+</body>
+</html>
